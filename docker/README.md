@@ -13,10 +13,8 @@ docker build -t instantmesh -f docker/Dockerfile .
 Run docker image with a local model cache (so it is fast when container is started next time):
 
 ```bash
-mkdir -p $HOME/models/
-export MODEL_DIR=$HOME/models/
-
-docker run -it -p 43839:43839 --platform=linux/amd64 --gpus all -v $MODEL_DIR:/workspace/instantmesh/models instantmesh
+# Run the Docker container
+docker run -it -p 43839:43839 --platform=linux/amd64 --gpus all -v D:\Project\TencentArc\model:/workspace/instantmesh/models instantmesh
 ```
 
 To use specific GPUs:

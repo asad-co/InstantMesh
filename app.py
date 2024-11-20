@@ -143,6 +143,12 @@ def generate_mvs(input_image, sample_steps, sample_seed):
         generator=generator,
     ).images[0]
 
+    save_dir="./generated_images"
+    os.makedirs(save_dir, exist_ok=True)  # Ensure the directory exists
+    save_path = os.path.join(save_dir, f"multi_view_seed_{sample_seed}.png")
+    z123_image.save(save_path)
+    print(f"Generated multi-view image saved to {save_path}")
+
     show_image = np.asarray(z123_image, dtype=np.uint8)
     show_image = torch.from_numpy(show_image)     # (960, 640, 3)
     show_image = rearrange(show_image, '(n h) (m w) c -> (n m) h w c', n=3, m=2)
@@ -150,89 +156,6 @@ def generate_mvs(input_image, sample_steps, sample_seed):
     show_image = Image.fromarray(show_image.numpy())
 
     return z123_image, show_image
-
-
-def make_mesh(mesh_fpath, planes):
-
-    mesh_basename = os.path.basename(mesh_fpath).split('.')[0]
-    mesh_dirname = os.path.dirname(mesh_fpath)
-    mesh_glb_fpath = os.path.join(mesh_dirname, f"{mesh_basename}.glb")
-        
-    with torch.no_grad():
-        # get mesh
-
-        mesh_out = model.extract_mesh(
-            planes,
-            use_texture_map=False,
-            **infer_config,
-        )
-
-        vertices, faces, vertex_colors = mesh_out
-        vertices = vertices[:, [1, 2, 0]]
-        
-        save_glb(vertices, faces, vertex_colors, mesh_glb_fpath)
-        save_obj(vertices, faces, vertex_colors, mesh_fpath)
-        
-        print(f"Mesh saved to {mesh_fpath}")
-
-    return mesh_fpath, mesh_glb_fpath
-
-
-def make3d(images):
-
-    images = np.asarray(images, dtype=np.float32) / 255.0
-    images = torch.from_numpy(images).permute(2, 0, 1).contiguous().float()     # (3, 960, 640)
-    images = rearrange(images, 'c (n h) (m w) -> (n m) c h w', n=3, m=2)        # (6, 3, 320, 320)
-
-    input_cameras = get_zero123plus_input_cameras(batch_size=1, radius=4.0).to(device1)
-    render_cameras = get_render_cameras(
-        batch_size=1, radius=4.5, elevation=20.0, is_flexicubes=IS_FLEXICUBES).to(device1)
-
-    images = images.unsqueeze(0).to(device1)
-    images = v2.functional.resize(images, (320, 320), interpolation=3, antialias=True).clamp(0, 1)
-
-    mesh_fpath = tempfile.NamedTemporaryFile(suffix=f".obj", delete=False).name
-    print(mesh_fpath)
-    mesh_basename = os.path.basename(mesh_fpath).split('.')[0]
-    mesh_dirname = os.path.dirname(mesh_fpath)
-    video_fpath = os.path.join(mesh_dirname, f"{mesh_basename}.mp4")
-
-    with torch.no_grad():
-        # get triplane
-        planes = model.forward_planes(images, input_cameras)
-
-        # get video
-        chunk_size = 20 if IS_FLEXICUBES else 1
-        render_size = 384
-        
-        frames = []
-        for i in tqdm(range(0, render_cameras.shape[1], chunk_size)):
-            if IS_FLEXICUBES:
-                frame = model.forward_geometry(
-                    planes,
-                    render_cameras[:, i:i+chunk_size],
-                    render_size=render_size,
-                )['img']
-            else:
-                frame = model.synthesizer(
-                    planes,
-                    cameras=render_cameras[:, i:i+chunk_size],
-                    render_size=render_size,
-                )['images_rgb']
-            frames.append(frame)
-        frames = torch.cat(frames, dim=1)
-
-        images_to_video(
-            frames[0],
-            video_fpath,
-            fps=30,
-        )
-
-        print(f"Video saved to {video_fpath}")
-
-    mesh_fpath, mesh_glb_fpath = make_mesh(mesh_fpath, planes)
-
-    return video_fpath, mesh_fpath, mesh_glb_fpath
 
 
 import gradio as gr
@@ -365,18 +288,12 @@ with gr.Blocks() as demo:
     gr.Markdown(_CITE_)
     mv_images = gr.State()
 
-    submit.click(fn=check_input_image, inputs=[input_image]).success(
-        fn=preprocess,
-        inputs=[input_image, do_remove_background],
-        outputs=[processed_image],
+    submit.click(
+        fn=check_input_image, inputs=[input_image]
     ).success(
-        fn=generate_mvs,
-        inputs=[processed_image, sample_steps, sample_seed],
-        outputs=[mv_images, mv_show_images],
+        fn=preprocess, inputs=[input_image, do_remove_background], outputs=[processed_image]
     ).success(
-        fn=make3d,
-        inputs=[mv_images],
-        outputs=[output_video, output_model_obj, output_model_glb]
+        fn=generate_mvs, inputs=[processed_image, sample_steps, sample_seed], outputs=[mv_show_images]
     )
 
 demo.queue(max_size=10)
